@@ -60,7 +60,11 @@
  *
  *	30.10.2017
  *	v3.0 - Support for Hive Active Light Colour Tuneable device.
+ *
+ *	31.08.2019
+ *  v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
  */
+ 
 definition(
 		name: "Hive (Connect)",
 		namespace: "alyc100",
@@ -150,7 +154,7 @@ def authenticated() {
 }
 
 def devicesSelected() {
-	return (selectedHeating || selectedHotWater || selectedBulb || selectedTunableBulb || selectedActivePlug || selectedColourBulb) ? "complete" : null
+	return (selectedHeating || selectedHotWater || selectedBulb || selectedTunableBulb || selectedActivePlug || selectedColourBulb || selectedTRV) ? "complete" : null
 }
 
 def preferencesSelected() {
@@ -180,7 +184,8 @@ def getDevicesSelectedString() {
         state.hiveTunableBulbDevices == null || 
         state.hiveBulbDevices == null ||
         state.hiveActivePlugDevices == null ||
-        state.hiveColourBulb == null) {
+        state.hiveColourBulb == null || 
+		state.hiveTRVDevices == null){
     	updateDevices()
   }
 	def listString = ""
@@ -212,6 +217,11 @@ def getDevicesSelectedString() {
 		if (null != state.selectedColourBulb)
             listString += "${state.selectedColourBulb[childDevice]}\n"
 	}
+    selectedTRV.each { childDevice ->		
+		if (null != state.hiveTRVDevices)
+            listString += "${state.hiveTRVDevices[childDevice]}\n"
+	}
+	
   
   	// Returns the completed list, and trims the last carrige return
 	return listString.trim()
@@ -275,7 +285,8 @@ def selectDevicePAGE() {
             input "selectedBulb", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-bulb.jpg", required:false, title:"Select Hive Light Dimmable Devices \n(${state.hiveBulbDevices.size() ?: 0} found)", multiple:true, options:state.hiveBulbDevices
 			input "selectedTunableBulb", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-tunablebulb.jpg", required:false, title:"Select Hive Light Tuneable Devices \n(${state.hiveTunableBulbDevices.size() ?: 0} found)", multiple:true, options:state.hiveTunableBulbDevices
             input "selectedColourBulb", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-colouredbulb.jpg", required:false, title:"Select Hive Light Colour Devices \n(${state.hiveColourBulb.size() ?: 0} found)", multiple:true, options:state.hiveColourBulb
-            input "selectedActivePlug", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-activeplug.jpg", required:false, title:"Select Hive Plug Devices \n(${state.hiveActivePlugDevices.size() ?: 0} found)", multiple:true, options:state.hiveActivePlugDevices
+			input "selectedActivePlug", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-activeplug.jpg", required:false, title:"Select Hive Plug Devices \n(${state.hiveActivePlugDevices.size() ?: 0} found)", multiple:true, options:state.hiveActivePlugDevices
+            input "selectedTRV", "enum", image: "https://raw.githubusercontent.com/Bibbleq/SmartThingsPublic-1/master/smartapps/alyc100/Hive-TRV.jpg", required:false, title:"Select Hive TRV Devices \n(${state.hiveTRVDevices.size() ?: 0} found)", multiple:true, options:state.hiveTRVDevices
 		}
   	}
 }
@@ -515,6 +526,9 @@ def initialize() {
         }
 		if(selectedColourBulb) {
 			addColourBulb()
+		}
+		if(selectedTRV) {
+			addTRV()
 		}
  	 	runIn(10, 'refreshDevices') // Asynchronously refresh devices so we don't block
 
@@ -897,6 +911,7 @@ def updateDevices() {
   state.hiveTunableBulbDevices = [:]
   state.hiveActivePlugDevices = [:]
   state.hiveColourBulb = [:]
+  state.hiveTRVDevices = [:]
   
   def selectors = []
 	devices.each { device ->
@@ -994,7 +1009,23 @@ def updateDevices() {
                         log.debug "Device's name has changed."
                     }
             	}
-          }	 
+		  // Hive TRV
+          }	 else if (device.type == "trvcontrol") {
+				log.debug "Identified: ${device.state.name} Hive TRV"
+            	def value = "${device.state.name} Hive TRV"
+                def key = device.id
+                state.hiveTRVDevices["${key}"] = value
+                //Update names of devices
+            	def childDevice = getChildDevice("${device.id}")
+            	if (childDevice) {
+                	//Update name of device if different.
+                	if(childDevice.name != device.state.name) {
+                        childDevice.name = device.state.name
+                        log.debug "Device's name has changed."
+                    }
+            	}
+		  }
+		  
 	}
   //Remove devices if does not exist on the Hive platform
   getChildDevices().findAll { !selectors.contains("${it.deviceNetworkId}") }.each {
@@ -1166,6 +1197,30 @@ def addActivePlug() {
 			log.debug "Created ${state.hiveActivePlugDevices[device]} with id: ${device}"
 		} else {
 			log.debug "found ${state.hiveActivePlugDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addTRV(){
+	updateDevices()
+
+	selectedTRV.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.info("Adding Hive TRV device ${device}: ${state.hiveTRVDevices[device]}")
+
+        	def data = [
+                name: state.hiveTRVDevices[device],
+				label: state.hiveTRVDevices[device],
+			]
+            childDevice = addChildDevice(app.namespace, "Hive TRV", "$device", null, data)
+            childDevice.refresh()
+			log.debug "Created ${state.hiveHotWaterDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveHotWaterDevices[device]} with id ${device} already exists"
 		}
 
 	}
