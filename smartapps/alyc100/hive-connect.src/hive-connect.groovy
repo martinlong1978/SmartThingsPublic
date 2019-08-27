@@ -62,7 +62,7 @@
  *	v3.0 - Support for Hive Active Light Colour Tuneable device.
  *
  *	31.08.2019
- *  v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
+ *      v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
  */
  
 definition(
