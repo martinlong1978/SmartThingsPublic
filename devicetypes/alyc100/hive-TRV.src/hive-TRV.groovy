@@ -16,7 +16,7 @@
  *
  *  VERSION HISTORY
  *
- *	29.10.2019
+ *	31.10.2019
  *	v1 based on Hive Heating DH code with modification for TRVs
  *
  */
@@ -61,7 +61,7 @@ metadata {
     
     	multiAttributeTile(name: "thermostat", width: 6, height: 4, type:"thermostat") {
 			tileAttribute("device.temperature", key:"PRIMARY_CONTROL", canChangeBackground: true){
-				attributeState "default", label: '${currentValue}°', unit:"C", backgroundColor:"#ec6e05"
+				attributeState "default", label: 'Currently: ${currentValue}°', unit:"C", backgroundColor:"#ec6e05"
 			}
             
             tileAttribute ("hiveHeating", key: "SECONDARY_CONTROL") {
@@ -83,7 +83,7 @@ metadata {
                     attributeState("emergency heat", label:'Boost')
   			}
   			tileAttribute("device.heatingSetpoint", key: "HEATING_SETPOINT") {
-                    attributeState "default", label: '${currentValue}°', backgroundColors: [
+                attributeState "default", label: 'Target: ${currentValue}°', backgroundColors: [
 				// Celsius Color Range
 				[value: 0, color: "#50b5dd"],
                 [value: 10, color: "#43a575"],
@@ -126,7 +126,7 @@ metadata {
 		}
 
 		valueTile("heatingSetpoint", "device.desiredHeatSetpoint", width: 2, height: 2) {
-			state "default", label:'${currentValue}°', unit:"C",
+			state "default", label:'Target: ${currentValue}°', unit:"C",
             backgroundColors:[
                 [value: 0, color: "#50b5dd"],
                 [value: 10, color: "#43a575"],
@@ -181,9 +181,13 @@ metadata {
 		valueTile("battery", "device.battery", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
 			state "battery", label:'${currentValue}% battery', unit:""
 		}
+		
+		valueTile("signal", "device.signal", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
+			state "signal", label:'Signal Strength: ${currentValue}%', unit:""
+		}
 
 		main(["thermostatOperatingState"])
-        details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpointUp", "heatingSetpoint", "boost", "boostTimeUp", "heatingSetpointDown", "boostTimeDown", "refresh", "battery"])
+        details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpointUp", "heatingSetpoint", "boost", "boostTimeUp", "heatingSetpointDown", "boostTimeDown", "refresh", "battery", "signal"])
         
         //Uncomment below for V1 tile layout
 		//details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpoint", "heatSliderControl", "boost", "boostSliderControl", "refresh"])
@@ -419,9 +423,12 @@ def poll() {
 	
 	//update battery
 	sendEvent("name": "battery", "value": currentDeviceDetails.props.battery, displayed: true)
-	
-	//device.battery = currentDeviceDetails.props.battery
 	log.debug "Battery: ${currentDeviceDetails.props.battery}"
+	
+	//update signal
+		sendEvent("name": "signal", "value": currentDeviceDetails.props.signal, displayed: true)
+	log.debug "Battery: ${currentDeviceDetails.props.signal}"
+	
 	
 	//Construct status message
 	def statusMsg = ""
