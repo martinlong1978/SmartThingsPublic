@@ -1,8 +1,9 @@
 /**
- *  Hive TRV
+ *  Hive (Connect)
  *
- *  Initial Copyright 2015 Alex Lee Yuk Cheung (Hive Thermostat DH)
- * 	Modified for use wiht Hive TRV - Ben Lee @Bibbleq
+ *  Copyright 2015,2016 Alex Lee Yuk Cheung
+ *	Hive Contact Sensor code portions contributed by Simon Green
+ *  Hive Active Bulb code portions contributed by Tom Beech
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -13,513 +14,1400 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *
  *  VERSION HISTORY
  *
- *	29.10.2019
- *	v1 based on Hive Heating DH code with modification for TRVs
+ *  24.02.2016
+ *  v2.0 BETA - New Hive Connect App
+ *  v2.0.1 BETA - Fix bug for accounts that do not have capabilities attribute against thermostat.
+ *	v2.1 - Improved authentication process and overhaul to UI. Added notification capability.
+ *  v2.1.1 - Bug fix when initially selecting devices for the first time.
+ *	v2.1.2 - Move external icon references into Github\
  *
+ *	17.08.2016
+ *  v2.1.3 - Fix null pointer on state variable corruption
+ *	v2.1.3b - Fix device failure on API timeout
+ *
+ *	01.09.2016
+ *	v2.2 - Integrate auto mode functionality from Auto Mode for Thermostat smart app
+ *
+ *  04.09.2016
+ *	v2.3 - Added support for Hive Contact Sensor - Author: Simon Green
+ *
+ *	06.09.2016
+ *	v2.3.1 - Improve device detection
+ *
+ *	10.09.2016
+ *	v2.3.2 - Added notification option for maximum temperature threshold breach for Hive heating devices.
+ *
+ *  23.1.2016
+ *  v2.4 - Added support for Hive Active Warm White and Hive Active Tunable Lights - Author: Tom Beech
+ *	v2.4b - Minor UI fixes for bulb devices.
+ *
+ *  28.11.2016 
+ *  v2.5 - Added support for Hive Active Plugs - Author: Tom Beech
+ *		 - Refactor of device selecting string - Author: Tom Beech
+ *		 - Review device naming and text consistency.
+ *
+ *	v2.5b - Shortern some device names.
+ *
+ * 	02.12.2016
+ * 	v2.6 - Added support for Hive Active Colour Bulb - Author: Tom Beech
+ *
+ *	28.05.2017
+ *	v2.7 - Support for new Hive Beekeeper API - Authors: Tom Beech, Alex Lee Yuk Cheung
+ *		 - Removed support for Hive Contact Sensor. Zigbee integration by Simon Green is preferred option.
+ *	v2.7b - Bug fix. Refresh bug prevents installation of Hive devices.
+ *
+ *	30.10.2017
+ *	v3.0 - Support for Hive Active Light Colour Tuneable device.
+ *
+ *	29.08.2019
+ *  v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
  */
  
-preferences 
-{
-	input( "boostInterval", "number", title: "Boost Interval (minutes)", description: "Boost interval amount in minutes", required: false, defaultValue: 60 )
-    input( "boostTemp", "decimal", title: "Boost Temperature (°C)", description: "Boost interval amount in Centigrade", required: false, defaultValue: 22, range: "5..32" )
-    input( "maxTempThreshold", "decimal", title: "Max Temperature Threshold (°C)", description: "Set the maximum temperature threshold in Centigrade", required: false, defaultValue: 32, range: "5..32" )
-	input( "disableDevice", "bool", title: "Disable Hive TRV?", required: false, defaultValue: false )
+definition(
+		name: "Hive (Connect)",
+		namespace: "alyc100",
+		author: "Alex Lee Yuk Cheung",
+		description: "Connect your Hive devices to SmartThings.",
+		iconUrl: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/10457773_334250273417145_3395772416845089626_n.png",
+		iconX2Url: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/10457773_334250273417145_3395772416845089626_n.png",
+    singleInstance: true
+)
+
+preferences {
+	//startPage
+	page(name: "startPage")
+
+	//Connect Pages
+	page(name:"mainPage", title:"Hive Device Setup", content:"mainPage", install: true)
+	page(name: "loginPAGE")
+	page(name: "selectDevicePAGE")
+	page(name: "preferencesPAGE")
+	page(name: "tmaPAGE")
+
+	//Thermostat Mode Automation Pages
+	page(name: "tmaConfigurePAGE")
 }
 
-metadata {
-	definition (name: "Hive TRV", namespace: "alyc100", author: "Alex Lee Yuk Cheung", ocfDeviceType: "oic.d.thermostat", mnmn: "SmartThings", vid: "SmartThings-smartthings-Z-Wave_Thermostat") {
-		capability "Actuator"
-		capability "Polling"
-		capability "Refresh"
-		capability "Temperature Measurement"
-        capability "Thermostat"
-		capability "Thermostat Heating Setpoint"
-		capability "Thermostat Mode"
-		capability "Thermostat Operating State"
-        capability "Health Check"
-		capability "Battery"
-        
-        command "heatingSetpointUp"
-		command "heatingSetpointDown"
-        command "boostTimeUp"
-		command "boostTimeDown"
-        command "setThermostatMode"
-        command "setHeatingSetpoint"
-        command "setTemperatureForSlider"
-        command "setBoostLength"
-        command "boostButton"
-	}
+def apiBeekeeperUKURL(path = '/') 			 { return "https://beekeeper-uk.hivehome.com:443/1.0${path}" }
+def apiBeekeeperURL(path = '/') 			 { return "https://beekeeper.hivehome.com:443/1.0${path}" }
 
-	simulator {
-		// TODO: define status and reply messages here
+def startPage() {
+	if (parent) {
+		atomicState?.isParent = false
+		tmaConfigurePAGE()
+		atomicState?.isParent = true
+	} else {
+		mainPage()
 	}
+}
 
-	tiles(scale: 2) {
+//Hive Connect App Pages
+
+def mainPage() {
+	log.debug "mainPage"
+	if (username == null || username == '' || password == null || password == '') {
+		return dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
+			section {
+				headerSECTION()
+				href("loginPAGE", title: null, description: authenticated() ? "Authenticated as " +username : "Tap to enter Hive credentials", state: authenticated())
+			}
+		}
+	} else {
+		log.debug "next phase"
+		return dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
+			section {
+				headerSECTION()
+				href("loginPAGE", title: "Authenticated as", description: authenticated() ? username : "Tap to enter Hive credentials", state: authenticated())
+			}
+			if (stateTokenPresent()) {
+				section ("Choose your devices:") {
+					href("selectDevicePAGE", title: "Devices", description: devicesSelected() ? getDevicesSelectedString() : "Tap to select devices", state: devicesSelected())
+				}
+				section("Hive Mode Automations:") {
+					href "tmaPAGE", title: "Hive Mode Automations...", description: (tmaDescription() ? tmaDescription() : "Tap to Configure..."), state: (tmaDescription() ? "complete" : null)
+				}
+				section ("Notifications:") {
+					href("preferencesPAGE", title: null, description: preferencesSelected() ? getPreferencesString() : "Tap to configure notifications", state: preferencesSelected())
+				}
+			} else {
+				section {
+					paragraph "There was a problem connecting to Hive. Check your user credentials and error logs in SmartThings web console.\n\n${state.loginerrors}"
+				}
+			}
+		}
+	}
+}
+
+def headerSECTION() {
+	return paragraph (image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/10457773_334250273417145_3395772416845089626_n.png",
+                  "Hive (Connect)\nVersion: 3.1\nDate: 31082019")
+}
+
+def stateTokenPresent() {
+	return state.beekeeperAccessToken != null && state.beekeeperAccessToken != ''
+}
+
+def authenticated() {
+	return (state.beekeeperAccessToken != null && state.beekeeperAccessToken != '') ? "complete" : null
+}
+
+def devicesSelected() {
+	return (selectedHeating || selectedHotWater || selectedBulb || selectedTunableBulb || selectedActivePlug || selectedColourBulb || selectedTRV) ? "complete" : null
+}
+
+def preferencesSelected() {
+	return (sendPush || sendSMS != null) && (maxtemp != null || mintemp != null || sendBoost || sendOff || sendManual || sendSchedule || sendMaxThresholdBreach) ? "complete" : null
+}
+
+def tmaDescription() {
+	def tmaApp = findChildAppByName( appName() )
+	if(tmaApp) {
+		def str = ""
+		str += "Thermostat Automations:"
+
+		childApps?.each { a ->
+			def name = a?.getLabel()
+			str += "\n• $name"
+		}
+
+		return str
+	}
+	return null
+}
+
+
+def getDevicesSelectedString() {
+	if (state.hiveHeatingDevices == null ||
+    	state.hiveHotWaterDevices == null || 
+        state.hiveTunableBulbDevices == null || 
+        state.hiveBulbDevices == null ||
+        state.hiveActivePlugDevices == null ||
+        state.hiveColourBulb == null || 
+		state.hiveTRVDevices == null){
+    	updateDevices()
+  }
+	def listString = ""
     
-    	multiAttributeTile(name: "thermostat", width: 6, height: 4, type:"thermostat") {
-			tileAttribute("device.temperature", key:"PRIMARY_CONTROL", canChangeBackground: true){
-				attributeState "default", label: '${currentValue}°', unit:"C", backgroundColor:"#ec6e05"
+	selectedHeating.each { childDevice ->    
+    	if (null != state.hiveHeatingDevices)
+    		listString += "${state.hiveHeatingDevices[childDevice]}\n"
+    }
+  
+	selectedHotWater.each { childDevice ->
+      if (null != state.hiveHotWaterDevices) 
+           	listString += "${state.hiveHotWaterDevices[childDevice]}\n"
+	}
+    
+	selectedBulb.each { childDevice ->
+        if (null != state.hiveBulbDevices)
+            listString += "${state.hiveBulbDevices[childDevice]}\n"
+	}
+    
+	selectedTunableBulb.each { childDevice ->		
+		if (null != state.hiveTunableBulbDevices)
+            listString += "${state.hiveTunableBulbDevices[childDevice]}\n"
+	}    
+    selectedActivePlug.each { childDevice ->		
+		if (null != state.hiveActivePlugDevices)
+            listString += "${state.hiveActivePlugDevices[childDevice]}\n"
+	}
+    selectedColourBulb.each {  childDevice ->		
+		if (null != state.selectedColourBulb)
+            listString += "${state.selectedColourBulb[childDevice]}\n"
+	}
+    selectedTRV.each { childDevice ->		
+		if (null != state.hiveTRVDevices)
+            listString += "${state.hiveTRVDevices[childDevice]}\n"
+	}
+	
+  
+  	// Returns the completed list, and trims the last carriage return
+	return listString.trim()
+}
+
+
+def getPreferencesString() {
+	def listString = ""
+  if (sendPush) listString += "Send Push, "
+  if (sendSMS != null) listString += "Send SMS, "
+  if (maxtemp != null) listString += "Max Temp: ${maxtemp}, "
+  if (mintemp != null) listString += "Min Temp: ${mintemp}, "
+  if (sendBoost) listString += "Boost, "
+  if (sendOff) listString += "Off, "
+  if (sendManual) listString += "Manual, "
+  if (sendSchedule) listString += "Schedule, "
+  if (sendMaxThresholdBreach) listString += "Max Temp Threshold Breach, "
+  if (listString != "") listString = listString.substring(0, listString.length() - 2)
+  return listString
+}
+
+def loginPAGE() {
+	if (username == null || username == '' || password == null || password == '') {
+		return dynamicPage(name: "loginPAGE", title: "Login", uninstall: false, install: false) {
+			section { headerSECTION() }
+			section { paragraph "Enter your Hive credentials below to enable SmartThings and Hive integration." }
+			section("Hive Credentials:") {
+				input("username", "text", title: "Username", description: "Your Hive username (usually an email address)", required: true)
+				input("password", "password", title: "Password", description: "Your Hive password", required: true, submitOnChange: true)
 			}
-            
-            tileAttribute ("hiveHeating", key: "SECONDARY_CONTROL") {
-				attributeState "hiveHeating", label:'${currentValue}'
+		}
+	} else {
+		getBeekeeperAccessToken()
+		dynamicPage(name: "loginPAGE", title: "Login", uninstall: false, install: false) {
+			section { headerSECTION() }
+			section { paragraph "Enter your Hive credentials below to enable SmartThings and Hive integration." }
+			section("Hive Credentials:") {
+				input("username", "text", title: "Username", description: "Your Hive username (usually an email address)", required: true)
+				input("password", "password", title: "Password", description: "Your Hive password", required: true, submitOnChange: true)
 			}
-  			tileAttribute("device.temperature", key: "VALUE_CONTROL") {
-    				attributeState("VALUE_UP", action: "heatingSetpointUp")
-    				attributeState("VALUE_DOWN", action: "heatingSetpointDown")
-  			}
-  			tileAttribute("device.thermostatOperatingState", key: "OPERATING_STATE") {
-    				attributeState("idle", backgroundColor:"#bbbbbb")
-    				attributeState("heating", backgroundColor:"#ec6e05")
-  			}
-  			tileAttribute("device.thermostatMode", key: "THERMOSTAT_MODE") {
-    				attributeState("off", label:'Off')
-    				attributeState("heat", label:'Manual')
-    				attributeState("cool", label:'Manual')
-    				attributeState("auto", label:'Schedule')
-                    attributeState("emergency heat", label:'Boost')
-  			}
-  			tileAttribute("device.heatingSetpoint", key: "HEATING_SETPOINT") {
-                    attributeState "default", label: '${currentValue}°', backgroundColors: [
-				// Celsius Color Range
-				[value: 0, color: "#50b5dd"],
-                [value: 10, color: "#43a575"],
-                [value: 13, color: "#c5d11b"],
-                [value: 17, color: "#f4961a"],
-                [value: 20, color: "#e75928"],
-                [value: 25, color: "#d9372b"],
-                [value: 29, color: "#b9203b"]
-			]}
-  			
+			if (stateTokenPresent()) {
+				section {
+					paragraph "You have successfully connected to Hive. Click 'Done' to select your Hive devices."
+				}
+			} else {
+				section {
+					paragraph "There was a problem connecting to Hive. Check your user credentials and error logs in SmartThings web console.\n\n${state.loginerrors}"
+				}
+			}
 		}
-        
-		controlTile("heatSliderControl", "device.desiredHeatSetpoint", "slider", height: 2, width: 3, inactiveLabel: false, range:"(5..32)") {
-			state "setHeatingSetpoint", label:'Set temperature to', action:"setTemperatureForSlider"
-		}
-        
-        controlTile("boostSliderControl", "device.boostLength", "slider", height: 2, width: 4, inactiveLabel: false, range:"(10..240)") {
-			state "setBoostLength", label:'Set boost length to', action:"setBoostLength"
-		}
-        
-		standardTile("heatingSetpointUp", "device.desiredHeatSetpoint", width: 1, height: 1, canChangeIcon: false, inactiveLabel: false, decoration: "flat") {
-			state "heatingSetpointUp", label:'  ', action:"heatingSetpointUp", icon:"st.thermostat.thermostat-up", backgroundColor:"#ffffff"
-		}
-
-		standardTile("heatingSetpointDown", "device.desiredHeatSetpoint", width: 1, height: 1, canChangeIcon: false, inactiveLabel: false, decoration: "flat") {
-			state "heatingSetpointDown", label:'  ', action:"heatingSetpointDown", icon:"st.thermostat.thermostat-down", backgroundColor:"#ffffff"
-		}
-        
-        valueTile("device.temperature", "device.temperature", canChangeBackground: true){
-			state "default", label: '${currentValue}°', unit:"C", 
-            backgroundColors:[
-				[value: 0, color: "#50b5dd"],
-                [value: 10, color: "#43a575"],
-                [value: 13, color: "#c5d11b"],
-                [value: 17, color: "#f4961a"],
-                [value: 20, color: "#e75928"],
-                [value: 25, color: "#d9372b"],
-                [value: 29, color: "#b9203b"]
-			]
-		}
-
-		valueTile("heatingSetpoint", "device.desiredHeatSetpoint", width: 2, height: 2) {
-			state "default", label:'${currentValue}°', unit:"C",
-            backgroundColors:[
-                [value: 0, color: "#50b5dd"],
-                [value: 10, color: "#43a575"],
-                [value: 13, color: "#c5d11b"],
-                [value: 17, color: "#f4961a"],
-                [value: 20, color: "#e75928"],
-                [value: 25, color: "#d9372b"],
-                [value: 29, color: "#b9203b"]
-            ]
-		}
-        
-        standardTile("boostTimeUp", "device.boostLength", width: 1, height: 1, canChangeIcon: false, inactiveLabel: false, decoration: "flat") {
-			state "heatingSetpointUp", label:'  ', action:"boostTimeUp", icon:"st.thermostat.thermostat-up", backgroundColor:"#ffffff"
-		}
-
-		standardTile("boostTimeDown", "device.boostLength", width: 1, height: 1, canChangeIcon: false, inactiveLabel: false, decoration: "flat") {
-			state "heatingSetpointDown", label:'  ', action:"boostTimeDown", icon:"st.thermostat.thermostat-down", backgroundColor:"#ffffff"
-		}
-   
-        standardTile("thermostatOperatingState", "device.thermostatOperatingState", inactiveLabel: true, decoration: "flat", width: 2, height: 2) {
-			state "idle", label:'${currentValue}', icon: "st.Weather.weather2"
-			state "heating", label:'${currentValue}', icon: "st.Weather.weather2", backgroundColor:"#EC6E05"
-		}
-        
-        standardTile("thermostatMode", "device.thermostatMode", inactiveLabel: true, decoration: "flat", width: 2, height: 2) {
-			state("auto", label: "SCHEDULED", icon:"st.Office.office7")
-			state("off", label: "OFF", icon:"st.thermostat.heating-cooling-off")
-			state("heat", label: "MANUAL", icon:"st.Weather.weather2")
-			state("emergency heat", label: "BOOST", icon:"st.Health & Wellness.health7")
-		}
-
-		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-			state("default", label:'refresh', action:"polling.poll", icon:"st.secondary.refresh-icon")
-		}
-        
-        valueTile("boost", "device.boostLabel", inactiveLabel: false, decoration: "flat", width: 2, height: 2, wordwrap: true) {
-			state("default", label:'${currentValue}', action:"boostButton")
-		}
-        
-        standardTile("mode_auto", "device.mode_auto", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-        	state "default", action:"auto", label:'Schedule', icon:"st.Office.office7"
-    	}
-        
-        standardTile("mode_manual", "device.mode_manual", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-        	state "default", action:"heat", label:'Manual', icon:"st.Weather.weather2"
-   	 	}
-        
-        standardTile("mode_off", "device.mode_off", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
-        	state "default", action:"off", icon:"st.thermostat.heating-cooling-off"
-   	 	}
-
-		valueTile("battery", "device.battery", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
-			state "battery", label:'${currentValue}% battery', unit:""
-		}
-
-		main(["thermostatOperatingState"])
-        details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpointUp", "heatingSetpoint", "boost", "boostTimeUp", "heatingSetpointDown", "boostTimeDown", "refresh", "battery"])
-        
-        //Uncomment below for V1 tile layout
-		//details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpoint", "heatSliderControl", "boost", "boostSliderControl", "refresh"])
 	}
 }
 
-// parse events into attributes
-def parse(String description) {
-	log.debug "Parsing '${description}'"
-	// TODO: handle 'temperature' attribute
-	// TODO: handle 'heatingSetpoint' attribute
-	// TODO: handle 'thermostatSetpoint' attribute
-	// TODO: handle 'thermostatMode' attribute
-	// TODO: handle 'thermostatOperatingState' attribute
+def selectDevicePAGE() {
+	updateDevices()
+	dynamicPage(name: "selectDevicePAGE", title: "Devices", uninstall: false, install: false) {
+  	section { headerSECTION() }
+    	section("Select your devices:") {
+			input "selectedHeating", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/thermostat-frame-6c75d5394d102f52cb8cf73704855446.png", required:false, title:"Select Hive Heating Devices \n(${state.hiveHeatingDevices.size() ?: 0} found)", multiple:true, options:state.hiveHeatingDevices
+			input "selectedHotWater", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/thermostat-frame-6c75d5394d102f52cb8cf73704855446.png", required:false, title:"Select Hive Hot Water Devices \n(${state.hiveHotWaterDevices.size() ?: 0} found)", multiple:true, options:state.hiveHotWaterDevices
+            input "selectedBulb", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-bulb.jpg", required:false, title:"Select Hive Light Dimmable Devices \n(${state.hiveBulbDevices.size() ?: 0} found)", multiple:true, options:state.hiveBulbDevices
+			input "selectedTunableBulb", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-tunablebulb.jpg", required:false, title:"Select Hive Light Tuneable Devices \n(${state.hiveTunableBulbDevices.size() ?: 0} found)", multiple:true, options:state.hiveTunableBulbDevices
+            input "selectedColourBulb", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-colouredbulb.jpg", required:false, title:"Select Hive Light Colour Devices \n(${state.hiveColourBulb.size() ?: 0} found)", multiple:true, options:state.hiveColourBulb
+			input "selectedActivePlug", "enum", image: "https://raw.githubusercontent.com/alyc100/SmartThingsPublic/master/smartapps/alyc100/hive-activeplug.jpg", required:false, title:"Select Hive Plug Devices \n(${state.hiveActivePlugDevices.size() ?: 0} found)", multiple:true, options:state.hiveActivePlugDevices
+            input "selectedTRV", "enum", image: "https://raw.githubusercontent.com/Bibbleq/SmartThingsPublic-1/master/smartapps/alyc100/Hive-TRV.jpg", required:false, title:"Select Hive TRV Devices \n(${state.hiveTRVDevices.size() ?: 0} found)", multiple:true, options:state.hiveTRVDevices
+		}
+  	}
 }
+
+def preferencesPAGE() {
+	dynamicPage(name: "preferencesPAGE", title: "Preferences", uninstall: false, install: false) {
+    section {
+    	input "sendPush", "bool", title: "Send as Push?", required: false, defaultValue: false
+			input "sendSMS", "phone", title: "Send as SMS?", required: false, defaultValue: null
+    }
+    section("Thermostat Notifications:") {
+			input "sendBoost", "bool", title: "Notify when mode is Boosting?", required: false, defaultValue: false
+			input "sendOff", "bool", title: "Notify when mode is Off?", required: false, defaultValue: false
+			input "sendManual", "bool", title: "Notify when mode is Manual?", required: false, defaultValue: false
+      input "sendSchedule", "bool", title: "Notify when mode is Schedule?", required: false, defaultValue: false
+		}
+    section("Thermostat Max Temperature") {
+    	input ("maxtemp", "number", title: "Alert when temperature is above this value", required: false, defaultValue: 25)
+    }
+    section("Thermostat Min Temperature") {
+    	input ("mintemp", "number", title: "Alert when temperature is below this value", required: false, defaultValue: 10)
+    }
+    section("Thermostat Max Threshold Breach") {
+    	input "sendMaxThresholdBreach", "bool", title: "Notify when max temp threshold has been breached?", required: false, defaultValue: false
+    }
+  }
+}
+
+def tmaPAGE() {
+	dynamicPage(name: "tmaPAGE", title: "", nextPage: !parent ? "startPage" : "tmaPAGE", install: false) {
+		def tmaApp = findChildAppByName( appName() )
+		if(tmaApp) {
+			section("Configured Hive Mode Automations...") { }
+		} else {
+			section("") {
+				paragraph "Create New Hive Mode Automation to get Started..."
+			}
+		}
+		section("Add a new Automation:") {
+			app(name: "tmaApp", appName: appName(), namespace: "alyc100", multiple: true, title: "Create New Mode Automation...")
+			def rText = "NOTICE:\nIntegrated Hive Mode Automations is in BETA\n"
+			paragraph "${rText}"//, required: true, state: null
+		}
+	}
+}
+
+//Auto Thermostat Mode Pages
+def tmaConfigurePAGE() {
+	dynamicPage(name: "tmaConfigurePAGE", title: "Hive Mode Automation", install: true, uninstall: true) {
+		section {
+    		input ("thermostats", "capability.thermostat", title: "For these thermostats",  multiple: true, required: true)
+  	}
+    section {
+        input(name: "modeTrigger", title: "Set the trigger to",
+              description: null, multiple: false, required: true, submitOnChange: true, type: "enum",
+              options: ["true": "Mode Change", "false": "Switches"])
+    }
+    if (modeTrigger == "true") {
+      // Do something here like update a message on the screen,
+      // or introduce more inputs. submitOnChange will refresh
+      // the page and allow the user to see the changes immediately.
+      // For example, you could prompt for the level of the dimmers
+      // if dimmers have been selected:
+      section {
+ 				input ("modes", "mode", title:"When SmartThings enters these modes", multiple: true, required: true)
+			}
+    } else if (modeTrigger == "false") {
+    	section {
+    		input ("theSwitch", "capability.switch", title:"When this switch is activated", multiple: false, required: true)
+      }
+    }
+		section {
+			input ("alteredThermostatMode", "enum", multiple: false, title: "Set thermostats to this mode",
+             options: ["Set To Schedule", "Boost", "Turn Off", "Set to Manual"], required: true, defaultValue: 'Turn Off')
+		}
+    section {
+    	input ("resetThermostats", "enum", title: "Reset thermostats after trigger turns off?",
+             options: ["true": "Yes","false": "No"], required: true, submitOnChange: true)
+  	}
+    if (resetThermostats == "true") {
+      section {
+			input ("resumedThermostatMode", "enum", multiple: false, title: "Reset thermostats back to this mode", submitOnChange: true,
+            	options: ["Set To Schedule", "Boost", "Turn Off", "Set to Manual"], required: true, defaultValue: 'Set To Schedule')
+		  }
+      if (resumedThermostatMode == "Boost") {
+      	section {
+					input ("thermostatModeAfterBoost", "enum", multiple: false, title: "What to do when Boost has finished",
+        	 				options: ["Set To Schedule", "Turn Off", "Set to Manual"], required: true, defaultValue: 'Set To Schedule')
+				}
+      }
+    }
+		section( "Additional configuration" ) {
+      input ("days", "enum", title: "Only on certain days of the week", multiple: true, required: false,
+		         options: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+      href "timeIntervalInput", title: "Only during a certain time", description: getTimeLabel(starting, ending), state: greyedOutTime(starting, ending), refreshAfterSelection:true
+		  input ("temp", "decimal", title: "If setting to Manual, set the temperature to this", required: false, defaultValue: 21)
+    }
+		section( "Notifications" ) {
+    	input ("sendPushMessage", "enum", title: "Send a push notification?",
+             options: ["Yes", "No"], required: true)
+    	input ("phone", "phone", title: "Send a Text Message?", required: false)
+		}
+    section {
+    	label title: "Assign a name", required: true
+  	}
+	}
+}
+
+page(name: "timeIntervalInput", title: "Only during a certain time", refreshAfterSelection:true) {
+	section {
+		input "starting", "time", title: "Starting", required: false
+		input "ending", "time", title: "Ending", required: false
+	}
+}
+
+
+// App lifecycle hooks
 
 def installed() {
-	log.debug "Executing 'installed'"
-    state.boostLength = 60
-    state.desiredHeatSetpoint = 7
-    sendEvent(name: "checkInterval", value: 10 * 60 + 2 * 60, data: [protocol: "cloud"], displayed: false)
+	if(parent) { installedChild() } // This will handle all of the install functions when the child app is installed
+	else { installedParent() } // This will handle all of the install functions when the parent app is installed
 }
 
-void updated() {
-	log.debug "Executing 'updated'"
-    sendEvent(name: "checkInterval", value: 10 * 60 + 2 * 60, data: [protocol: "cloud"], displayed: false)
+def updated() {
+	if(parent) { updatedChild() } // This will handle all of the install functions when the child app is updated
+	else { updatedParent() } // This will handle all of the install functions when the parent app is updated
 }
 
-// handle commands
-def setHeatingSetpoint(temp) {
-	log.debug "Executing 'setHeatingSetpoint with temp $temp'"
-	def latestThermostatMode = device.latestState('thermostatMode')
-    
-    if (temp < 5) {
-		temp = 5
+def uninstalled() {
+	if(parent) { } // This will handle all of the install functions when the child app is uninstalled
+	else { uninstalledParent() } // This will handle all of the install functions when the parent app is uninstalled
+}
+
+def installedParent() {
+	log.debug "installed"
+	initialize()
+	// Check for new devices every 3 hours
+	runEvery3Hours('updateDevices')
+	// execute handlerMethod every 10 minutes.
+	runEvery10Minutes('refreshDevices')
+}
+
+// called after settings are changed
+def updatedParent() {
+	log.debug "updated"
+	unsubscribe()
+	initialize()
+	unschedule('refreshDevices')
+	runEvery10Minutes('refreshDevices')
+}
+
+def uninstalledParent() {
+	log.info("Uninstalling, removing child devices...")
+	unschedule()
+	removeChildDevices(getChildDevices())
+}
+
+private removeChildDevices(devices) {
+	devices.each {
+		deleteChildDevice(it.deviceNetworkId) // 'it' is default
 	}
-	if (temp > 32) {
-		temp = 32
-	}
-         
-    if (settings.disableDevice == null || settings.disableDevice == false) {
-    	//if thermostat is off, set to manual 
-        def args
-   		if (latestThermostatMode.stringValue == 'off') {
-    		args = [
-        		mode: "SCHEDULE", target: temp
-            ]
-		
-    	} 
-    	else {
-    	// {"target":7.5}
-    		args = [
-        		target: temp
-        	]               
-    	}
-    	def resp = parent.apiPOST("/nodes/trvcontrol/${device.deviceNetworkId}", args)    	
+}
+
+def installedChild() {
+  log.debug "Installed with settings: ${settings}"
+  //set up initial thermostat state and force thermostat into correct mode
+  state.thermostatAltered = false
+  state.boostingReset = false
+
+  //Flags to stop possible infinite loop scenarios when handlers create events
+  state.internalThermostatEvent = false
+  state.internalSwitchEvent = false
+
+  subscribe(thermostats, "thermostatMode", thermostateventHandlerForTMA, [filterEvents: false])
+  //Check if mode or switch is the trigger and run initialisation
+  if (modeTrigger == "true") {
+  	def currentMode = location.mode
+  	log.debug "currentMode = $currentMode"
+  	if (currentMode in modes) {
+      	takeActionForMode(currentMode)
+  	}
+  	subscribe(location, "mode", modeeventHandlerForTMA, [filterEvents: false])
+  }
+  else {
+  	if (theSwitch.currentSwitch == "on") {
+      	takeActionForSwitch(theSwitch.currentSwitch)
+      }
+  	subscribe(theSwitch, "switch", switcheventHandlerForTMA, [filterEvents: false])
+  }
+}
+
+def updatedChild() {
+  log.debug "Updated with settings: ${settings}"
+  unsubscribe()
+  //set up initial thermostat state and force thermostat into correct mode
+  state.thermostatAltered = false
+  state.boostingReset = false
+  state.internalThermostatEvent = false
+  state.internalSwitchEvent = false
+  subscribe(thermostats, "thermostatMode", thermostateventHandlerForTMA, [filterEvents: false])
+  //Check if mode or switch is the trigger and run initialisation
+  if (modeTrigger == "true") {
+  	def currentMode = location.mode
+  	log.debug "currentMode = $currentMode"
+  	if (currentMode in modes) {
+      	takeActionForMode(currentMode)
+  	}
+  	subscribe(location, "mode", modeeventHandlerForTMA, [filterEvents: false])
+  } else {
+  	if (theSwitch.currentSwitch == "on") {
+      	takeActionForSwitch(theSwitch.currentSwitch)
     }
-    runIn(4, refresh)
+  	subscribe(theSwitch, "switch", switcheventHandlerForTMA, [filterEvents: false])
+  }
 }
 
-def setBoostLength(minutes) {
-	log.debug "Executing 'setBoostLength with length $minutes minutes'"
-	//modified minimum boost to be 15 minutes as TRV can take 15 minutes to pick up new set points
-    if (minutes < 15) {
-		minutes = 15
-	}
-	if (minutes > 240) {
-		minutes = 240
-	}
-    state.boostLength = minutes
-    sendEvent("name":"boostLength", "value": state.boostLength, displayed: true)
-    refreshBoostLabel()  
+// called after Done is hit after selecting a Location
+def initialize() {
+	if (parent) { }
+    else {
+		log.debug "initialize"
+
+  	if (selectedHeating) {
+			addHeating()
+		}
+		if (selectedHotWater) {
+			addHotWater()
+		}
+		if(selectedBulb) {
+        	addBulb()
+        }
+        if(selectedTunableBulb) {
+        	addTunableBulb()
+        }
+        if(selectedActivePlug) {
+        	addActivePlug()
+        }
+		if(selectedColourBulb) {
+			addColourBulb()
+		}
+		if(selectedTRV) {
+			addTRV()
+		}
+ 	 	runIn(10, 'refreshDevices') // Asynchronously refresh devices so we don't block
+
+  	//subscribe to events for notifications if activated
+  	if (preferencesSelected() == "complete") {
+  		getChildDevices().each { childDevice ->
+  			if (childDevice.typeName == "Hive Heating V2.0" || childDevice.typeName == "Hive Hot Water V2.0") {
+  				subscribe(childDevice, "thermostatMode", modeHandler, [filterEvents: false])
+    		}
+    		if (childDevice.typeName == "Hive Heating V2.0") {
+    			subscribe(childDevice, "temperature", tempHandler, [filterEvents: false])
+                subscribe(childDevice, "maxtempthresholdbreach", evtHandler, [filterEvents: false])
+    		}
+  		}
+  	}
+  	state.maxNotificationSent = false
+  	state.minNotificationSent = false
+  }
 }
 
-def getBoostIntervalValue() {
-	if (settings.boostInterval == null) {
-    	return 10
-    } 
-    return settings.boostInterval.toInteger()
+//Event Handler for Connect App
+def evtHandler(evt) {
+	def msg
+    if (evt.name == "maxtempthresholdbreach") {
+    	msg = "Auto adjusting set temperature of ${evt.displayName} as current set temperature of ${evt.value}°C is above maximum threshold."
+    	if (settings.sendMaxThresholdBreach) generateNotification(msg)    
+    }
 }
 
-def getBoostTempValue() {
-	if (settings.boostTemp == null) {
-    	return "22"
-    } 
-    return settings.boostTemp
+def tempHandler(evt) {
+	def msg
+    log.trace "temperature: $evt.value, $evt"
+
+    if (settings.maxtemp != null) {
+    	def maxTemp = settings.maxtemp
+        if (evt.doubleValue >= maxTemp) {
+        	msg = "${evt.displayName} temperature reading is very hot."
+            if (state.maxNotificationSent == null || state.maxNotificationSent == false) {
+            	generateNotification(msg)
+                //Avoid constant messages
+            	state.maxNotificationSent = true
+            }
+        }
+        else {
+        	//Reset if temperature falls back to normal levels
+            state.maxNotificationSent = false
+        }
+    }
+    else if (settings.mintemp != null) {
+    	def minTemp = settings.mintemp
+        if (evt.doubleValue <= minTemp) {
+        	msg = "${evt.displayName} temperature reading is very cold."
+            if (state.minNotificationSent == null || state.minNotificationSent == false) {
+            	generateNotification(msg)
+                //Avoid constant messages
+            	state.minNotificationSent = true
+            }
+        }
+        else {
+        	//Reset if temperature falls back to normal levels
+        	state.minNotificationSent = false
+        }
+    }
 }
 
-def getMaxTempThreshold() {
-	if (settings.maxTempThreshold == null) {
-    	return "32"
-    } 
-    return settings.maxTempThreshold
+def modeHandler(evt) {
+	def msg
+    	if (evt.value == "heat") {
+    		msg = "${evt.displayName} is set to Manual"
+        	if (settings.sendSchedule) generateNotification(msg)
+    	}
+		else if (evt.value == "off") {
+    		msg = "${evt.displayName} is turned Off"
+        	if (settings.sendOff) generateNotification(msg)
+    	}
+    	else if (evt.value == "auto") {
+    		msg = "${evt.displayName} is set to Schedule"
+        	if (settings.sendManual) generateNotification(msg)
+    	}
+    	else if (evt.value == "emergency heat") {
+    		msg = "${evt.displayName} is in Boost mode"
+       	 	if (settings.sendBoost) generateNotification(msg)
+    	}
+
 }
 
-def boostTimeUp() {
-	log.debug "Executing 'boostTimeUp'"
-    //Round down result
-    int boostIntervalValue = getBoostIntervalValue()
-    def newBoostLength = (state.boostLength + boostIntervalValue) - (state.boostLength % boostIntervalValue)
-	setBoostLength(newBoostLength)
+//Event Handlers for Thermostat Mode Automation
+
+def modeeventHandlerForTMA(evt) {
+    if(allOk) {
+    	log.debug "evt.value: $evt.value"
+    	takeActionForMode(evt.value)
+    }
 }
 
-def boostTimeDown() {
-	log.debug "Executing 'boostTimeDown'"
-    //Round down result
-    int boostIntervalValue = getBoostIntervalValue()
-    def newBoostLength = (state.boostLength - boostIntervalValue) - (state.boostLength % boostIntervalValue)
-	setBoostLength(newBoostLength)
+//Handler and action for switch detection
+def switcheventHandlerForTMA(evt) {
+	if(allOk) {
+		log.debug "evt.value: $evt.value"
+    	log.debug "state.internalSwitchEvent: $state.internalSwitchEvent"
+    	if (state.internalSwitchEvent == false) {
+    		takeActionForSwitch(evt.value)
+    	}
+    	state.internalSwitchEvent = false
+    }
 }
 
-def boostButton() {
-	log.debug "Executing 'boostButton'"
-	setThermostatMode('emergency heat')
+def thermostateventHandlerForTMA(evt) {
+	log.debug "evt.name: $evt.value"
+    log.debug "state.thermostatAltered: $state.thermostatAltered"
+    log.debug "alteredThermostatMode: $alteredThermostatMode"
+    log.debug "state.boostingReset: $state.boostingReset"
+    //If boost mode is selected as the trigger, turn switch off if boost mode finishes...
+ 	if (state.internalThermostatEvent == false) {
+    	if (modeTrigger == "false") {
+    		//if the switch is currently on, check the new mode of the thermostat and set switch to off if necessary
+        	if (alteredThermostatMode == "Boost") {
+            	state.internalSwitchEvent = true
+        		if (evt.value != "emergency heat") {
+                	//Switching the switch to off should trigger an event that resets app state
+        			theSwitch.off()
+        		}
+            	else {
+            		//Switching the switch to on so it can't be boost again
+            		theSwitch.on()
+                }
+            }
+       	 }
+
+    	//If boost mode is selected as resumed state, need to set thermostat mode as per preference
+    	if (state.boostingReset) {
+    		if (evt.value != "emergency heat") {
+            	state.internalThermostatEvent = true
+        		changeAllThermostatsModes(thermostats, thermostatModeAfterBoost, "Boost has now finished")
+            	//Reset boosting reset flag
+            	state.boostingReset = false
+        	}
+    	}
+    }
+    state.internalThermostatEvent = false
 }
 
-def setHeatingSetpointToDesired() {
-	setHeatingSetpoint(state.newSetpoint)
-}
+// Thermostat Auto Mode Methods
+def takeActionForSwitch(switchState) {
+	// Is incoming switch is on
+    if (switchState == "on")
+    {
+    	//Check thermostat is not already altered
+    	if (!state.thermostatAltered)
+        {
+        	//Turn selected thermostats into selected mode
 
-def setNewSetPointValue(newSetPointValue) {
-	log.debug "Executing 'setNewSetPointValue' with value $newSetPointValue"
-	unschedule('setHeatingSetpointToDesired')
-    state.newSetpoint = newSetPointValue
-    state.desiredHeatSetpoint = state.newSetpoint
-	sendEvent("name":"desiredHeatSetpoint", "value": state.desiredHeatSetpoint, displayed: false)
-	log.debug "Setting heat set point up to: ${state.newSetpoint}"
-    runIn(3, setHeatingSetpointToDesired)
-}
-
-def heatingSetpointUp(){
-	log.debug "Executing 'heatingSetpointUp'"
-	setNewSetPointValue(getHeatTemp().toInteger() + 1)
-}
-
-def heatingSetpointDown(){
-	log.debug "Executing 'heatingSetpointDown'"
-	setNewSetPointValue(getHeatTemp().toInteger() - 1)
-}
-
-def setTemperatureForSlider(value) {
-	log.debug "Executing 'setTemperatureForSlider with $value'"
-	setNewSetPointValue(value)  
-}
-
-def getHeatTemp() { 
-	return state.desiredHeatSetpoint == null ? device.currentValue("heatingSetpoint") : state.desiredHeatSetpoint
-}
-
-def off() {
-	setThermostatMode('off')
-}
-
-def heat() {
-	setThermostatMode('heat')
-}
-
-def emergencyHeat() {
-	log.debug "Executing 'boost'"
-	
-    def latestThermostatMode = device.latestState('thermostatMode')
-    
-    //Don't do if already in BOOST mode.
-	if (latestThermostatMode.stringValue != 'emergency heat') {
-		setThermostatMode('emergency heat')
+            //Add detail to push message if set to Manual is specified
+        	log.debug "$theSwitch.label is on, turning thermostats to $alteredThermostatMode"
+            state.internalThermostatEvent = true
+            changeAllThermostatsModes(thermostats, alteredThermostatMode, "$theSwitch.label has turned on")
+            //Only if reset action is specified, set the thermostatAltered state.
+            if (resetThermostats == "true")
+            {
+        		state.thermostatAltered = true
+            }
+        }
     }
     else {
-    	log.debug "Already in boost mode."
+        log.debug "$theSwitch.label is off"
+        //Check if thermostats have previously been altered
+        if (state.thermostatAltered)
+        {
+        	//Check if user wants to reset thermostats
+        	if (resetThermostats == "true")
+ 			{
+            	log.debug "Thermostats have been altered, turning back to $resumedThermostatMode"
+                //Turn selected thermostats into selected mode
+                state.internalThermostatEvent = true
+            	changeAllThermostatsModes(thermostats, resumedThermostatMode, "$theSwitch.label has turned off")
+
+                //Set flag if boost mode is selected as reset state so it can be set back to desired mode in 'thermostatModeAfterBoost'
+                if (resumedThermostatMode == "Boost") {
+                	state.boostingReset = true
+                }
+
+            }
+            //Reset app state
+            state.thermostatAltered = false
+        }
+        else
+     	{
+        	log.debug "Thermostats were not altered. No action taken."
+        }
+    }
+}
+
+def takeActionForMode(mode) {
+	// Is incoming mode in the event input enumeration
+    if (mode in modes)
+    {
+    	//Check thermostat is not already altered
+    	if (!state.thermostatAltered)
+        {
+        	//Turn selected thermostats into selected mode
+
+            //Add detail to push message if set to Manual is specified
+        	log.debug "$mode in selected modes, turning thermostats to $alteredThermostatMode"
+            state.internalThermostatEvent = true
+            changeAllThermostatsModes(thermostats, alteredThermostatMode, "mode has changed to $mode")
+
+        	//Only if reset action is specified, set the thermostatAltered state.
+            if (resetThermostats == "true")
+            {
+        		state.thermostatAltered = true
+            }
+        }
+    }
+    else {
+        log.debug "$mode is not in select modes"
+        //Check if thermostats have previously been altered
+        if (state.thermostatAltered)
+        {
+        	//Check if user wants to reset thermostats
+        	if (resetThermostats == "true")
+ 			{
+            	log.debug "Thermostats have been altered, turning back to $resumedThermostatMode"
+
+            	//Turn each thermostat to selected mode
+                state.internalThermostatEvent = true
+            	changeAllThermostatsModes(thermostats, resumedThermostatMode, "mode has changed to $mode")
+
+ 				//Set flag if boost mode is selected as reset state so it can be set back to desired mode in 'thermostatModeAfterBoost'
+                if (resumedThermostatMode == "Boost") {
+                	state.boostingReset = true
+                }
+
+            }
+            //Reset app state
+            state.thermostatAltered = false
+        }
+        else
+     	{
+        	log.debug "Thermostats were not altered. No action taken."
+        }
+    }
+}
+
+//Helper method for thermostat mode change
+private changeAllThermostatsModes(thermostats, newThermostatMode, reason) {
+	//Add detail to push message if set to Manual is specified
+    def thermostatModeDetail = newThermostatMode
+    if (newThermostatMode == "Set to Manual") {
+    	thermostatModeDetail = thermostatModeDetail + " at $temp°C"
+    }
+	for (thermostat in thermostats) {
+    	def message = ''
+        message = "SmartThings has reset $thermostat.label to $thermostatModeDetail because $reason."
+        log.info message
+        send(message)
+        log.debug "Setting $thermostat.label to $thermostatModeDetail"
+		if (newThermostatMode == "Set to Manual") {
+    		thermostat.heat()
+        	thermostat.setHeatingSetpoint(temp)
+    	}
+    	else if (newThermostatMode == "Turn Off") {
+    		thermostat.off()
+    	}
+    	else if (newThermostatMode == "Boost") {
+    		thermostat.emergencyHeat()
+    	}
+    	else {
+    		thermostat.auto()
+		}
+    }
+}
+
+private send(msg) {
+    if ( sendPushMessage != "No" ) {
+        log.debug( "sending push message" )
+        sendPush( msg )
     }
 
-}
-
-def auto() {
-	setThermostatMode('auto')
-}
-
-def setThermostatMode(mode) {
-	if (settings.disableDevice == null || settings.disableDevice == false) {
-		mode = mode == 'cool' ? 'heat' : mode
-		log.debug "Executing 'setThermostatMode with mode $mode'"
-    	def args = [
-        		mode: "SCHEDULE"
-            ]
-    	if (mode == 'off') {
-     		args = [
-        		mode: "OFF"
-            ]
-    	} else if (mode == 'heat') {
-        	//mode": "MANUAL", "target": 20
-    		args = [
-        		mode: "MANUAL", 
-                target: 20
-            ]
-    	} else if (mode == 'emergency heat') {  
-    		if (state.boostLength == null || state.boostLength == '')
-        	{
-        		state.boostLength = 60
-            	sendEvent("name":"boostLength", "value": 60, displayed: true)
-        	}
-    		//"mode": "BOOST","boost": 60,"target": 22
-			args = [
-            	mode: "BOOST",
-                boost: state.boostLength,
-                target: getBoostTempValue()
-        	]
-   		}
-    
-    	def resp = parent.apiPOST("/nodes/trvcontrol/${device.deviceNetworkId}", args)
-		mode = mode == 'range' ? 'auto' : mode    	
+    if ( phone ) {
+        log.debug( "sending text message" )
+        sendSms( phone, msg )
     }
-    runIn(4, refresh)
+
+    log.debug msg
 }
 
-def refreshBoostLabel() {
-	def boostLabel = "Start\n$state.boostLength Min Boost"
-    def latestThermostatMode = device.latestState('thermostatMode')  
-    if (latestThermostatMode.stringValue == 'emergency heat' ) {
-    	boostLabel = "Restart\n$state.boostLength Min Boost"
+private getAllOk() {
+	daysOk && timeOk
+}
+
+private getDaysOk() {
+	def result = true
+	if (days) {
+		def df = new java.text.SimpleDateFormat("EEEE")
+		if (location.timeZone) {
+			df.setTimeZone(location.timeZone)
+		}
+		else {
+			df.setTimeZone(TimeZone.getTimeZone("Europe/London"))
+		}
+		def day = df.format(new Date())
+		result = days.contains(day)
+	}
+	log.trace "daysOk = $result"
+	result
+}
+
+private getTimeOk() {
+	def result = true
+	if (starting && ending) {
+		def currTime = now()
+		def start = timeToday(starting).time
+		def stop = timeToday(ending).time
+		result = start < stop ? currTime >= start && currTime <= stop : currTime <= stop || currTime >= start
+	}
+	log.trace "timeOk = $result"
+	result
+}
+
+private hhmm(time, fmt = "h:mm a") {
+	def t = timeToday(time, location.timeZone)
+	def f = new java.text.SimpleDateFormat(fmt)
+	f.setTimeZone(location.timeZone ?: timeZone(time))
+	f.format(t)
+}
+
+def getTimeLabel(starting, ending){
+
+	def timeLabel = "Tap to set"
+
+    if(starting && ending){
+    	timeLabel = "Between" + " " + hhmm(starting) + " "  + "and" + " " +  hhmm(ending)
     }
-    sendEvent("name":"boostLabel", "value": boostLabel, displayed: false)
+    else if (starting) {
+		timeLabel = "Start at" + " " + hhmm(starting)
+    }
+    else if(ending){
+    timeLabel = "End at" + hhmm(ending)
+    }
+	timeLabel
 }
 
-def poll() {
-	log.debug "Executing 'poll' for $device.deviceNetworkId"
-	def currentDevice = parent.getDeviceStatus(device.deviceNetworkId)
-	if (currentDevice == []) {
-		return []
-	}
-    log.debug "${device.name} status: ${currentDevice}"
-	
-	def currentDeviceDetails = parent.getDeviceInfo(device.deviceNetworkId)
-	log.debug "${device.name} details: ${currentDeviceDetails}"
-	
-	//update battery
-	sendEvent("name": "battery", "value": currentDeviceDetails.props.battery, displayed: true)
-	
-	//device.battery = currentDeviceDetails.props.battery
-	log.debug "Battery: ${currentDeviceDetails.props.battery}"
-	
-	//Construct status message
-	def statusMsg = ""
-	
-	//Boost button label
-	if (state.boostLength == null || state.boostLength == '')
-	{
-		state.boostLength = 60
-		sendEvent("name":"boostLength", "value": 60, displayed: true)
-	}
-	def boostLabel = "Start\n$state.boostLength Min Boost"
-	
-	// get temperature status
-	def temperature = currentDevice.props.temperature
-	def heatingSetpoint = currentDevice.state.target as Double
-	
-	//Check heating set point against maximum threshold value.
-	log.debug "Maximum temperature threshold set to: " + getMaxTempThreshold()
-	if ((getMaxTempThreshold() as BigDecimal) < (heatingSetpoint as BigDecimal)) {
-		log.debug "Maximum temperature threshold exceeded. " + heatingSetpoint + " is higher than " + getMaxTempThreshold()
-		sendEvent(name: 'maxtempthresholdbreach', value: heatingSetpoint, unit: "C", displayed: false)
-		//Force temperature threshold to Hive API.
-		def args = [
-			target: getMaxTempThreshold()
-		]
-
-		parent.apiPOST("/nodes/trvcontrol/${device.deviceNetworkId}", args)   
-		heatingSetpoint = String.format("%2.1f", getMaxTempThreshold())           
-	}
-	
-	// convert temperature reading of 1 degree to 7 as Hive app does
-	if (heatingSetpoint == "1.0") {
-		heatingSetpoint = "7.0"
-	}
-	sendEvent(name: 'temperature', value: temperature, unit: "C", state: "heat")
-	sendEvent(name: 'heatingSetpoint', value: heatingSetpoint, unit: "C", state: "heat")
-	sendEvent(name: 'coolingSetpoint', value: heatingSetpoint, unit: "C", state: "heat")
-	sendEvent(name: 'thermostatSetpoint', value: heatingSetpoint, unit: "C", state: "heat", displayed: false)
-	sendEvent(name: 'thermostatFanMode', value: "off", displayed: false)
-	
-	state.desiredHeatSetpoint = heatingSetpoint
-	sendEvent("name":"desiredHeatSetpoint", "value": state.desiredHeatSetpoint, unit: "C", displayed: false)
-	
-	// determine hive operating mode
-	def mode = currentDevice.state.mode.toLowerCase()
-	
-	//If Hive heating device is set to disabled, then force off if not already off.
-	if (settings.disableDevice != null && settings.disableDevice == true && mode != "off") {
-		def args = [
-			mode: "OFF"
-		]
-		parent.apiPOST("/nodes/trvcontrol/${device.deviceNetworkId}", args)
-		mode = 'off'
-	} 
-	else if (mode == "boost") {
-		mode = 'emergency heat'          
-		def boostTime = currentDevice.state.boost
-		boostLabel = "Restart\n$state.boostLength Min Boost"
-		statusMsg = "Boost " + boostTime + "min"
-		sendEvent("name":"boostTimeRemaining", "value": boostTime + " mins")
-	}
-	else if (mode == "manual") {
-		mode = 'heat'
-		statusMsg = statusMsg + " Manual"
-	}
-	else if (mode == "off") {
-		mode = 'off'
-		statusMsg = statusMsg + " Off"
-	}
-	else {
-		mode = 'auto'
-		statusMsg = statusMsg + " Schedule"
-	}
-	
-	if (settings.disableDevice != null && settings.disableDevice == true) {
-		statusMsg = "DISABLED"
-	}
-	
-	sendEvent(name: 'thermostatMode', value: mode) 
-	
-	// determine if Hive heating relay is on
-	def stateHeatingRelay = (heatingSetpoint as BigDecimal) > (temperature as BigDecimal)
-	
-	log.debug "stateHeatingRelay: $stateHeatingRelay"
-	
-	if (stateHeatingRelay) {
-		sendEvent(name: 'thermostatOperatingState', value: "heating")
-	}       
-	else {
-		sendEvent(name: 'thermostatOperatingState', value: "idle")
-	}  
-
-	sendEvent("name":"hiveHeating", "value": statusMsg, displayed: false)  
-	sendEvent("name":"boostLabel", "value": boostLabel, displayed: false)
-
+private hideOptionsSection() {
+	(starting || ending || days || modes) ? false : true
 }
 
-def refresh() {
-	log.debug "Executing 'refresh'"
-	poll()
+def greyedOutSettings(){
+	def result = ""
+    if (starting || ending || days || falseAlarmThreshold) {
+    	result = "complete"
+    }
+    result
 }
+
+def greyedOutTime(starting, ending){
+	def result = ""
+    if (starting || ending) {
+    	result = "complete"
+    }
+    result
+}
+
+def generateNotification(msg) {
+	if (settings.sendSMS != null) {
+		sendSms(sendSMS, msg)
+	}
+	if (settings.sendPush == true) {
+		sendPush(msg)
+	}
+}
+
+def updateDevices() {
+	if (!state.devices) {
+		state.devices = [:]
+	}
+	def devices = devicesList()
+  state.hiveHeatingDevices = [:]
+  state.hiveHotWaterDevices = [:]
+  state.hiveBulbDevices = [:]
+  state.hiveTunableBulbDevices = [:]
+  state.hiveActivePlugDevices = [:]
+  state.hiveColourBulb = [:]
+  state.hiveTRVDevices = [:]
+  
+  def selectors = []
+	devices.each { device ->
+        selectors.add("${device.id}")
+        //Heating
+        if (device.type == "heating") {
+            //Heating Control
+            log.debug "Identified: ${device.state.name} Hive Heating"
+            def value = "${device.state.name} Hive Heating"
+            def key = device.id
+            state.hiveHeatingDevices["${key}"] = value
+
+            //Update names of devices with Hive
+                def childDevice = getChildDevice("${device.id}")
+                if (childDevice) {
+                    //Update name of device if different.
+                    if(childDevice.name != device.state.name + " Hive Heating") {
+                            childDevice.name = device.state.name + " Hive Heating"
+                            log.debug "Device's name has changed."
+                    }
+                }
+        // Water Control
+        } else if (device.type == "hotwater") {
+        	log.debug "Identified: ${device.state.name} Hive Hot Water"
+            def value = "${device.state.name} Hive Hot Water"
+            def key = device.id
+            state.hiveHotWaterDevices["${key}"] = value
+
+            //Update names of devices
+            def childDevice = getChildDevice("${device.id}")
+            if (childDevice) {
+            	//Update name of device if different.
+                    if(childDevice.name != device.state.name + " Hive Hot Water") {
+                            childDevice.name = device.state.name + " Hive Hot Water"
+                            log.debug "Device's name has changed."
+                    }
+            }
+        //Dimmable Bulb
+        } else if (device.type == "tuneablelight") {
+			log.debug "Identified: ${device.state.name} Hive Light Tunable"
+            def value = "${device.state.name} Hive Light Tunable"
+                def key = device.id
+                state.hiveTunableBulbDevices["${key}"] = value
+                //Update names of devices
+            	def childDevice = getChildDevice("${device.id}")
+            	if (childDevice) {
+                	//Update name of device if different.
+                	if(childDevice.name != device.state.name) {
+                            childDevice.name = device.state.name
+                            log.debug "Device's name has changed."
+                    }
+            	}
+        //Colour Bulb
+        } else if (device.type == "colourtuneablelight") {
+			log.debug "Identified: ${device.state.name} Hive Colour Bulb"
+            def value = "${device.state.name} Hive Colour Bulb"
+                def key = device.id
+                state.hiveColourBulb["${key}"] = value
+                //Update names of devices
+            	def childDevice = getChildDevice("${device.id}")
+            	if (childDevice) {
+                	//Update name of device if different.
+                	if(childDevice.name != device.state.name) {
+                            childDevice.name = device.state.name
+                            log.debug "Device's name has changed."
+                    }
+            	}
+        //White Active Light Bulb
+        } else if (device.type == "warmwhitelight") {
+			log.debug "Identified: ${device.state.name} Hive Light Dimmable"
+            def value = "${device.state.name} Hive Light Dimmable"
+                def key = device.id
+                state.hiveBulbDevices["${key}"] = value
+                //Update names of devices
+            	def childDevice = getChildDevice("${device.id}")
+            	if (childDevice) {
+                	//Update name of device if different.
+                	if(childDevice.name != device.state.name) {
+                            childDevice.name = device.state.name
+                            log.debug "Device's name has changed."
+                    }
+            	}
+        // Active Plug            
+        } else if (device.type == "activeplug") {
+				log.debug "Identified: ${device.state.name} Hive Plug"
+            	def value = "${device.state.name} Hive Plug"
+                def key = device.id
+                state.hiveActivePlugDevices["${key}"] = value
+                //Update names of devices
+            	def childDevice = getChildDevice("${device.id}")
+            	if (childDevice) {
+                	//Update name of device if different.
+                	if(childDevice.name != device.state.name) {
+                        childDevice.name = device.state.name
+                        log.debug "Device's name has changed."
+                    }
+            	}
+		  // Hive TRV
+          }	 else if (device.type == "trvcontrol") {
+				log.debug "Identified: ${device.state.name} Hive TRV"
+            	def value = "${device.state.name} Hive TRV"
+                def key = device.id
+                state.hiveTRVDevices["${key}"] = value
+                //Update names of devices
+            	def childDevice = getChildDevice("${device.id}")
+            	if (childDevice) {
+                	//Update name of device if different.
+                	if(childDevice.name != device.state.name) {
+                        childDevice.name = device.state.name
+                        log.debug "Device's name has changed."
+                    }
+            	}
+		  }
+		  
+	}
+  //Remove devices if does not exist on the Hive platform
+  getChildDevices().findAll { !selectors.contains("${it.deviceNetworkId}") }.each {
+	log.info("Deleting ${it.deviceNetworkId}")
+    try {
+			deleteChildDevice(it.deviceNetworkId)
+    } catch (physicalgraph.exception.NotFoundException e) {
+    	log.info("Could not find ${it.deviceNetworkId}. Assuming manually deleted.")
+    } catch (physicalgraph.exception.ConflictException ce) {
+    	log.info("Device ${it.deviceNetworkId} in use. Please manually delete.")
+    }
+	}
+}
+
+def addHeating() {
+	updateDevices()
+
+	selectedHeating.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.info("Adding Hive Heating device ${device}: ${state.hiveHeatingDevices[device]}")
+
+        	def data = [
+                name: state.hiveHeatingDevices[device],
+				label: state.hiveHeatingDevices[device],
+			]
+            childDevice = addChildDevice(app.namespace, "Hive Heating", "$device", null, data)
+            childDevice.refresh()
+
+			log.debug "Created ${state.hiveHeatingDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveHeatingDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addHotWater() {
+	updateDevices()
+
+	selectedHotWater.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.info("Adding Hive Hot Water device ${device}: ${state.hiveHotWaterDevices[device]}")
+
+        	def data = [
+                name: state.hiveHotWaterDevices[device],
+				label: state.hiveHotWaterDevices[device],
+			]
+            childDevice = addChildDevice(app.namespace, "Hive Hot Water", "$device", null, data)
+            childDevice.refresh()
+			log.debug "Created ${state.hiveHotWaterDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveHotWaterDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addBulb() {
+	updateDevices()
+
+	selectedBulb.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.debug "Adding Hive Light Dimmable device ${device}: ${state.hiveBulbDevices[device]}"
+
+        	def data = [
+                name: state.hiveBulbDevices[device],
+				label: state.hiveBulbDevices[device],
+			]
+            
+            log.debug data
+            
+            childDevice = addChildDevice(app.namespace, "Hive Active Light", "$device", null, data)
+            childDevice.refresh()
+            
+			log.debug "Created ${state.hiveBulbDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveBulbDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addTunableBulb() {
+	updateDevices()
+
+	selectedTunableBulb.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.debug "Adding Hive Light Tuneable device ${device}: ${state.hiveTunableBulbDevices[device]}"
+
+        	def data = [
+                name: state.hiveTunableBulbDevices[device],
+				label: state.hiveTunableBulbDevices[device],
+			]
+            
+            log.debug data
+            
+            childDevice = addChildDevice(app.namespace, "Hive Active Light Tuneable", "$device", null, data)
+            childDevice.refresh()
+            
+			log.debug "Created ${state.hiveTunableBulbDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveTunableBulbDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addColourBulb() {
+	updateDevices()
+
+	selectedColourBulb.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.debug "Adding Hive Light Colour device ${device}: ${state.hiveBulbDevices[device]}"
+
+        	def data = [
+                name: state.hiveColourBulb[device],
+				label: state.hiveColourBulb[device],
+			]
+            
+            log.debug data
+            
+            childDevice = addChildDevice(app.namespace, "Hive Active Light Colour Tuneable", "$device", null, data)
+            childDevice.refresh()
+            
+			log.debug "Created ${state.hiveColourBulb[device]} with id: ${device}"
+            
+		} else {
+			log.debug "found ${state.hiveColourBulb[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addActivePlug() {
+	updateDevices()
+
+	selectedActivePlug.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.debug "Adding Hive Plug device ${device}: ${state.hiveActivePlugDevices[device]}"
+
+        	def data = [
+                name: state.hiveActivePlugDevices[device],
+				label: state.hiveActivePlugDevices[device],
+			]
+            
+            log.debug data
+            
+            childDevice = addChildDevice(app.namespace, "Hive Active Plug", "$device", null, data)
+            childDevice.refresh()
+            
+			log.debug "Created ${state.hiveActivePlugDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveActivePlugDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def addTRV(){
+	updateDevices()
+
+	selectedTRV.each { device ->
+
+        def childDevice = getChildDevice("${device}")
+
+        if (!childDevice) {
+    		log.info("Adding Hive TRV device ${device}: ${state.hiveTRVDevices[device]}")
+
+        	def data = [
+                name: state.hiveTRVDevices[device],
+				label: state.hiveTRVDevices[device],
+			]
+            childDevice = addChildDevice(app.namespace, "Hive TRV", "$device", null, data)
+            childDevice.refresh()
+			log.debug "Created ${state.hiveTRVDevices[device]} with id: ${device}"
+		} else {
+			log.debug "found ${state.hiveTRVDevices[device]} with id ${device} already exists"
+		}
+
+	}
+}
+
+def refreshDevices() {
+	log.info("Refreshing all devices...")
+	getChildDevices().each { device ->
+		device.refresh()
+	}
+}
+
+def devicesList() {
+	logErrors([]) {
+		def resp = apiGET("/products")
+		if (resp.status == 200) {
+			return resp.data
+		} else {
+			log.error("Non-200 from device list call. ${resp.status} ${resp.data}")
+			return []
+		}
+	}
+}
+
+def getDeviceStatus(id) {
+	def retVal = []
+	def resp = apiGET("/products")
+	if (resp.status == 200) {
+		resp.data.eachWithIndex { currentDevice, i ->
+        	if(currentDevice.id == id) { 
+				retVal = resp.data[i]
+            }
+        }
+                
+	} else {
+		log.error("Non-200 from product list call. ${resp.status} ${resp.data}")
+	}
+    log.debug "Product call returned: $retVal"
+	return retVal
+}
+
+def getDeviceInfo(id) {
+	def retVal = []
+	def resp = apiGET("/devices")
+	if (resp.status == 200) {
+		resp.data.eachWithIndex { currentDevice, i ->
+			if(currentDevice.state.control == id) {
+				retVal = resp.data[i]
+            }
+        }
+		
+	} else {
+		log.error("Non-200 from device info call. ${resp.status} ${resp.data}")
+	}
+	log.debug "Device call returned: $retVal"
+    return retVal
+}
+
+def apiGET(path, body = [:]) {
+	try {
+    	if(!isLoggedIn()) {
+			log.debug "Need to login"
+			getBeekeeperAccessToken()
+		}
+        log.debug("Beginning API GET: ${apiBeekeeperUKURL(path)}, ${apiRequestHeaders()}")
+
+        httpGet(uri: apiBeekeeperUKURL(path), contentType: 'application/json', headers: apiRequestHeaders()) {response ->
+			logResponse(response)
+			return response
+		}
+	} catch (groovyx.net.http.HttpResponseException e) {
+		log.debug "error in GET"
+		logResponse(e.response)
+		return e.response
+	}
+}
+
+def apiPOST(path, body = [:]) {
+	try {
+    	if(!isLoggedIn()) {
+			log.debug "Need to login"
+			getBeekeeperAccessToken()
+		}
+		log.debug("Beginning API POST: ${path}, ${body}")
+
+		httpPostJson(uri: apiBeekeeperUKURL(path), body: body, headers: apiRequestHeaders() ) {response ->
+			logResponse(response)
+			log.debug "1"
+			return response
+		}
+	} catch (groovyx.net.http.HttpResponseException e) {
+		log.debug "2"
+		logResponse(e.response)
+		return e.response
+	}
+}
+
+def getBeekeeperAccessToken() {
+	try {
+    	def params = [
+			uri: apiBeekeeperURL('/global/login'),
+        	contentType: 'application/json',
+        	headers: [
+              'Content-Type': 'application/json'
+        	],
+        	body: [
+        		username: settings.username,
+                password: settings.password,
+                devices: false,
+                products: false     	
+    		]
+        ]
+
+		state.cookie = ''
+
+		httpPostJson(params) {response ->
+			log.debug "Request was successful, $response.status"
+			log.debug response.headers
+
+        	state.cookie = response?.headers?.'Set-Cookie'?.split(";")?.getAt(0)
+			log.debug "Adding cookie to collection: $cookie"
+        	log.debug "auth: $response.data"
+			log.debug "cookie: $state.cookie"
+        	log.debug "sessionid: ${response.data.token}"
+
+        	state.beekeeperAccessToken = response.data.token
+        	// set the expiration to 5 minutes
+			state.beekeeperAccessToken_expires_at = new Date().getTime() + 300000
+            state.loginerrors = null
+		}
+    } catch (groovyx.net.http.HttpResponseException e) {
+    	state.beekeeperAccessToken = null
+        state.beekeeperAccessToken_expires_at = null
+   		state.loginerrors = "Error: ${e.response.status}: ${e.response.data}"
+    	logResponse(e.response)
+		return e.response
+    }
+}
+
+def apiRequestHeaders() {
+	return [
+        'authorization': "${state.beekeeperAccessToken}"
+    ]
+}
+
+def isLoggedIn() {
+	state.remove("hiveAccessToken")
+	log.debug "Calling isLoggedIn()"
+	log.debug "isLoggedIn state $state.beekeeperAccessToken"
+	if(!state.beekeeperAccessToken) {
+		log.debug "No state.beekeeperAccessToken"
+		return false
+	}
+
+	def now = new Date().getTime()
+    return state.beekeeperAccessToken_expires_at > now
+}
+
+
+def isTmaAppInst() {
+	def chldCnt = 0
+	childApps?.each { cApp ->
+//        if(cApp?.name != getWatchdogAppChildName()) { chldCnt = chldCnt + 1 }
+		chldCnt = chldCnt + 1
+	}
+	return (chldCnt > 0) ? true : false
+}
+
+def logResponse(response) {
+	log.info("Status: ${response.status}")
+	log.info("Body: ${response.data}")
+}
+
+def logErrors(options = [errorReturn: null, logObject: log], Closure c) {
+	try {
+		return c()
+	} catch (groovyx.net.http.HttpResponseException e) {
+		log.error("got error: ${e}, body: ${e.getResponse().getData()}")
+		if (e.statusCode == 401) { // token is expired
+			state.remove("beekeeperAccessToken")
+			log.warn "Access token is not valid"
+		}
+		return options.errorReturn
+	} catch (java.net.SocketTimeoutException e) {
+		log.warn "Connection timed out, not much we can do here"
+		return options.errorReturn
+	}
+}
+
+def appName() 		{ return "${parent ? "Hive Mode Automation" : "Hive (Connect)"}" }
