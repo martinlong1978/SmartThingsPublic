@@ -18,6 +18,7 @@
  *
  *	31.10.2019
  *	v1 based on Hive Heating DH code with modification for TRVs
+ * 	v1.1 modified code to use "working" property (from Hive API) to try and identify when TRV has picked up new heating setpoint
  *
  */
  
@@ -426,10 +427,9 @@ def poll() {
 	log.debug "Battery: ${currentDeviceDetails.props.battery}"
 	
 	//update signal
-		sendEvent("name": "signal", "value": currentDeviceDetails.props.signal, displayed: true)
-	log.debug "Battery: ${currentDeviceDetails.props.signal}"
-	
-	
+	sendEvent("name": "signal", "value": currentDeviceDetails.props.signal, displayed: true)
+	log.debug "Signal: ${currentDeviceDetails.props.signal}"
+		
 	//Construct status message
 	def statusMsg = ""
 	
@@ -513,11 +513,14 @@ def poll() {
 	def stateHeatingRelay = (heatingSetpoint as BigDecimal) > (temperature as BigDecimal)
 	
 	log.debug "stateHeatingRelay: $stateHeatingRelay"
+	log.debug "Working status: ${currentDevice.props.working}"
 	
-	if (stateHeatingRelay) {
+	if (stateHeatingRelay && currentDevice.props.working.toBoolean() == true) {
+		log.debug "heating"
 		sendEvent(name: 'thermostatOperatingState', value: "heating")
 	}       
 	else {
+		log.debug "idle"
 		sendEvent(name: 'thermostatOperatingState', value: "idle")
 	}  
 
