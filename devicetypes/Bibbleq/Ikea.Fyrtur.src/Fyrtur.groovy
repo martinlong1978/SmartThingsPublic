@@ -15,6 +15,7 @@
  *	Ben Lee @Bibbleq
  *
  *	v1
+ *	v1.1	Fix for working in a routine
  *
  */
 import physicalgraph.zigbee.zcl.DataType
@@ -151,7 +152,9 @@ def open() {
 }
 
 def setLevel(data, rate = null) {
-    log.info "setLevel()"
+	// convert to integer as routines pass a string value
+    data = data.toInteger()
+    log.info "setLevel() ${data}"
     def cmd
     cmd = zigbee.command(CLUSTER_WINDOW_COVERING, COMMAND_GOTO_LIFT_PERCENTAGE, zigbee.convertToHexString(100-data, 2))
     
