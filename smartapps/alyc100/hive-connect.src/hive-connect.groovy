@@ -63,6 +63,10 @@
  *
  *	29.08.2019
  *  v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
+ *
+ *	13.09.2019
+ *	v3.2 - Created new function to get TRV status (caches data for 2 minutes under State) this should improve TRVs showing as offline
+ *	
  */
  
 definition(
@@ -1262,13 +1266,61 @@ def getDeviceStatus(id) {
 	return retVal
 }
 
+def getDeviceTRVStatus(id) {
+	def DeviceTRVStatus = []
+    def retVal = []
+    def TimeNow = now()
+    def CacheExpire = state.LastTRVCheck + 120000
+    
+    log.debug "Last check: ${state.LastTRVCheck}, cache expires: ${CacheExpire}"
+    
+    if (CacheExpire < TimeNow || null == state.DeviceTRVStatusCache){
+    	log.debug "getting new data"
+		def resp = apiGET("/products")
+        if (resp.status == 200) {
+            DeviceTRVStatus = resp.data
+            state.DeviceTRVStatusCache = null
+			state.DeviceTRVStatusCache = DeviceTRVStatus
+        	state.LastTRVCheck = TimeNow
+        } else {
+			log.error("Non-200 from product list call. ${resp.status} ${resp.data}")
+		}
+    } else {
+    	log.debug "using cached data"
+    	DeviceTRVStatus = state.DeviceTRVStatusCache
+    }
+
+    DeviceTRVStatus.eachWithIndex { currentDevice, i ->
+		if(currentDevice.id == id) {
+        	retVal = DeviceTRVStatus[i]
+        }
+    }
+
+	log.debug "TRV Product call returned: ${retVal}"
+	return retVal
+}
+
 def getDeviceInfo(id) {
+	def retVal = []
+	def resp = apiGET("/devices/${id}")
+	if (resp.status == 200) {
+    	retVal = resp.data
+
+	} else {
+		log.error("Non-200 from device info call. ${resp.status} ${resp.data}")
+	}
+	log.debug "Device call returned: $retVal"
+    return retVal
+}
+
+def getDeviceID(ProductID) {
 	def retVal = []
 	def resp = apiGET("/devices")
 	if (resp.status == 200) {
 		resp.data.eachWithIndex { currentDevice, i ->
-			if(currentDevice.state.control == id) {
-				retVal = resp.data[i]
+			if(currentDevice.state.control == ProductID) {
+				log.debug "Device ID identified as: ${resp.data[i].id}"
+                retVal = resp.data[i].id
             }
         }
 		
