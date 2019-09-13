@@ -18,7 +18,12 @@
  *
  *	31.10.2019
  *	v1 based on Hive Heating DH code with modification for TRVs
- * 	v1.1 modified code to use "working" property (from Hive API) to try and identify when TRV has picked up new heating setpoint
+ *	
+ *	06.09.2019
+ * 	v1.1 display calibration information
+ *
+ *	13.09.2019
+ *	v1.2 Updated to make more efficient (parent caches product information for 2 minutes)
  *
  */
  
@@ -186,9 +191,17 @@ metadata {
 		valueTile("signal", "device.signal", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
 			state "signal", label:'Signal Strength: ${currentValue}%', unit:""
 		}
+        
+        valueTile("calibrationstatus", "device.calibrationstatus", decoration: "flat", inactiveLabel: false, width: 5, height: 1) {
+			state "calibrationstatus", label:'Calibrated: ${currentValue}', unit:""
+		}
+        
+        valueTile("calibrationtimestamp", "device.calibrationtimestamp", decoration: "flat", inactiveLabel: false, width: 5, height: 1) {
+			state "calibration", label:'Started: ${currentValue}', unit:""
+		}
 
 		main(["thermostatOperatingState"])
-        details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpointUp", "heatingSetpoint", "boost", "boostTimeUp", "heatingSetpointDown", "boostTimeDown", "refresh", "battery", "signal"])
+        details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpointUp", "heatingSetpoint", "boost", "boostTimeUp", "heatingSetpointDown", "boostTimeDown", "refresh", "battery", "signal", "calibrationstatus", "calibrationtimestamp"])
         
         //Uncomment below for V1 tile layout
 		//details(["thermostat", "mode_auto", "mode_manual", "mode_off", "heatingSetpoint", "heatSliderControl", "boost", "boostSliderControl", "refresh"])
@@ -411,15 +424,27 @@ def refreshBoostLabel() {
     sendEvent("name":"boostLabel", "value": boostLabel, displayed: false)
 }
 
+def setDeviceID() {
+	def DeviceID = parent.getDeviceID(device.deviceNetworkId)
+    state.DeviceID = DeviceID
+}
+
+
 def poll() {
 	log.debug "Executing 'poll' for $device.deviceNetworkId"
-	def currentDevice = parent.getDeviceStatus(device.deviceNetworkId)
+	def currentDevice = parent.getDeviceTRVStatus(device.deviceNetworkId)
 	if (currentDevice == []) {
 		return []
 	}
     log.debug "${device.name} status: ${currentDevice}"
 	
-	def currentDeviceDetails = parent.getDeviceInfo(device.deviceNetworkId)
+    if (state.DeviceID == null) {
+    	log.debug "Device ID Null"
+        setDeviceID()
+    }
+    
+    //Get Device info (Product & Device API requests return differnt sets of info)
+    def currentDeviceDetails = parent.getDeviceInfo(state.DeviceID)
 	log.debug "${device.name} details: ${currentDeviceDetails}"
 	
 	//update battery
@@ -429,7 +454,15 @@ def poll() {
 	//update signal
 	sendEvent("name": "signal", "value": currentDeviceDetails.props.signal, displayed: true)
 	log.debug "Signal: ${currentDeviceDetails.props.signal}"
-		
+    
+    //update calibration status
+    sendEvent("name": "calibrationstatus", "value": currentDeviceDetails.state.calibrationStatus, displayed: true)
+	log.debug "Calibrationstatus: ${currentDeviceDetails.state.calibrationStatus}"
+
+    //update calibration timestamp
+    sendEvent("name": "calibrationtimestamp", "value": currentDeviceDetails.props.calibration, displayed: true)
+	log.debug "Calibration Time: ${currentDeviceDetails.props.calibration}"
+    
 	//Construct status message
 	def statusMsg = ""
 	
