@@ -25,6 +25,9 @@
  *	13.09.2019
  *	v1.2 Updated to make more efficient (parent caches product information for 2 minutes)
  *
+ *	18.09.2019
+ *	v1.3 Added refresh capabilities into DH instead of relying on parent SA (causes timeouts if too many TRVs)
+ *
  */
  
 preferences 
@@ -429,7 +432,6 @@ def setDeviceID() {
     state.DeviceID = DeviceID
 }
 
-
 def poll() {
 	log.debug "Executing 'poll' for $device.deviceNetworkId"
 	def currentDevice = parent.getDeviceTRVStatus(device.deviceNetworkId)
@@ -445,23 +447,23 @@ def poll() {
     
     //Get Device info (Product & Device API requests return differnt sets of info)
     def currentDeviceDetails = parent.getDeviceInfo(state.DeviceID)
-	log.debug "${device.name} details: ${currentDeviceDetails}"
+	//log.debug "${device.name} details: ${currentDeviceDetails}"
 	
 	//update battery
 	sendEvent("name": "battery", "value": currentDeviceDetails.props.battery, displayed: true)
-	log.debug "Battery: ${currentDeviceDetails.props.battery}"
+	//log.debug "Battery: ${currentDeviceDetails.props.battery}"
 	
 	//update signal
 	sendEvent("name": "signal", "value": currentDeviceDetails.props.signal, displayed: true)
-	log.debug "Signal: ${currentDeviceDetails.props.signal}"
+	//log.debug "Signal: ${currentDeviceDetails.props.signal}"
     
     //update calibration status
     sendEvent("name": "calibrationstatus", "value": currentDeviceDetails.state.calibrationStatus, displayed: true)
-	log.debug "Calibrationstatus: ${currentDeviceDetails.state.calibrationStatus}"
+	//log.debug "Calibrationstatus: ${currentDeviceDetails.state.calibrationStatus}"
 
     //update calibration timestamp
     sendEvent("name": "calibrationtimestamp", "value": currentDeviceDetails.props.calibration, displayed: true)
-	log.debug "Calibration Time: ${currentDeviceDetails.props.calibration}"
+	//log.debug "Calibration Time: ${currentDeviceDetails.props.calibration}"
     
 	//Construct status message
 	def statusMsg = ""
@@ -487,7 +489,6 @@ def poll() {
 		def args = [
 			target: getMaxTempThreshold()
 		]
-
 		parent.apiPOST("/nodes/trvcontrol/${device.deviceNetworkId}", args)   
 		heatingSetpoint = String.format("%2.1f", getMaxTempThreshold())           
 	}
@@ -498,9 +499,9 @@ def poll() {
 	}
 	sendEvent(name: 'temperature', value: temperature, unit: "C", state: "heat")
 	sendEvent(name: 'heatingSetpoint', value: heatingSetpoint, unit: "C", state: "heat")
-	sendEvent(name: 'coolingSetpoint', value: heatingSetpoint, unit: "C", state: "heat")
+	//sendEvent(name: 'coolingSetpoint', value: heatingSetpoint, unit: "C", state: "heat")
 	sendEvent(name: 'thermostatSetpoint', value: heatingSetpoint, unit: "C", state: "heat", displayed: false)
-	sendEvent(name: 'thermostatFanMode', value: "off", displayed: false)
+	//sendEvent(name: 'thermostatFanMode', value: "off", displayed: false)
 	
 	state.desiredHeatSetpoint = heatingSetpoint
 	sendEvent("name":"desiredHeatSetpoint", "value": state.desiredHeatSetpoint, unit: "C", displayed: false)
@@ -515,26 +516,43 @@ def poll() {
 		]
 		parent.apiPOST("/nodes/trvcontrol/${device.deviceNetworkId}", args)
 		mode = 'off'
-	} 
-	else if (mode == "boost") {
-		mode = 'emergency heat'          
-		def boostTime = currentDevice.state.boost
-		boostLabel = "Restart\n$state.boostLength Min Boost"
-		statusMsg = "Boost " + boostTime + "min"
-		sendEvent("name":"boostTimeRemaining", "value": boostTime + " mins")
 	}
-	else if (mode == "manual") {
-		mode = 'heat'
-		statusMsg = statusMsg + " Manual"
-	}
-	else if (mode == "off") {
-		mode = 'off'
-		statusMsg = statusMsg + " Off"
-	}
-	else {
-		mode = 'auto'
-		statusMsg = statusMsg + " Schedule"
-	}
+	
+    switch (mode) {
+        case "boost":
+            mode = 'emergency heat'          
+            def boostTime = currentDevice.state.boost
+            boostLabel = "Restart\n$state.boostLength Min Boost"
+            statusMsg = "Boost " + boostTime + "min"
+            sendEvent("name":"boostTimeRemaining", "value": boostTime + " mins")
+        case "manual":
+            mode = 'heat'
+            statusMsg = statusMsg + " Manual"
+        case "auto":
+            statusMsg = statusMsg + " Schedule"
+        default:
+        	log.debug "default"
+    }
+    
+    //else if (mode == "boost") {
+	//	mode = 'emergency heat'          
+	//	def boostTime = currentDevice.state.boost
+	//	boostLabel = "Restart\n$state.boostLength Min Boost"
+	//	statusMsg = "Boost " + boostTime + "min"
+	//	sendEvent("name":"boostTimeRemaining", "value": boostTime + " mins")
+	//}
+	//else if (mode == "manual") {
+	//	mode = 'heat'
+	//	statusMsg = statusMsg + " Manual"
+	//}
+	//else if (mode == "off") {
+	//	mode = 'off'
+	//	statusMsg = statusMsg + " Off"
+	//}
+	//else {
+	//	mode = 'auto'
+	//	statusMsg = statusMsg + " Schedule"
+	//}
 	
 	if (settings.disableDevice != null && settings.disableDevice == true) {
 		statusMsg = "DISABLED"
@@ -545,15 +563,15 @@ def poll() {
 	// determine if Hive heating relay is on
 	def stateHeatingRelay = (heatingSetpoint as BigDecimal) > (temperature as BigDecimal)
 	
-	log.debug "stateHeatingRelay: $stateHeatingRelay"
-	log.debug "Working status: ${currentDevice.props.working}"
+	//log.debug "stateHeatingRelay: $stateHeatingRelay"
+	//log.debug "Working status: ${currentDevice.props.working}"
 	
 	if (stateHeatingRelay && currentDevice.props.working.toBoolean() == true) {
-		log.debug "heating"
+		//log.debug "heating"
 		sendEvent(name: 'thermostatOperatingState', value: "heating")
 	}       
 	else {
-		log.debug "idle"
+		//log.debug "idle"
 		sendEvent(name: 'thermostatOperatingState', value: "idle")
 	}  
 
@@ -564,5 +582,6 @@ def poll() {
 
 def refresh() {
 	log.debug "Executing 'refresh'"
-	poll()
+    unshedule('poll')
+	runEvery5Minutes('poll')
 }
