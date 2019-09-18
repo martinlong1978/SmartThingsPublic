@@ -62,10 +62,14 @@
  *	v3.0 - Support for Hive Active Light Colour Tuneable device.
  *
  *	29.08.2019
- *  v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
+ *	v3.1 - First attempt at TRV support added by Ben Lee @Bibbleq
  *
  *	13.09.2019
  *	v3.2 - Created new function to get TRV status (caches data for 2 minutes under State) this should improve TRVs showing as offline
+ *
+ *	18.09.2019
+ *	v3.3 - Added refresh to child TRV DH to prevent drop-outs (this SmartApp would timeout if too many TVRs).
+ * 	Changed logic in this SH to only refresh child devices that haven't checked in for 5 minutes
  *	
  */
  
@@ -534,7 +538,7 @@ def initialize() {
 		if(selectedTRV) {
 			addTRV()
 		}
- 	 	runIn(10, 'refreshDevices') // Asynchronously refresh devices so we don't block
+ 	 	runIn(1, 'refreshDevices') // Asynchronously refresh devices so we don't block
 
   	//subscribe to events for notifications if activated
   	if (preferencesSelected() == "complete") {
@@ -602,7 +606,7 @@ def modeHandler(evt) {
 	def msg
     	if (evt.value == "heat") {
     		msg = "${evt.displayName} is set to Manual"
-        	if (settings.sendSchedule) generateNotification(msg)
+                if (settings.sendSchedule) generateNotification(msg)
     	}
 		else if (evt.value == "off") {
     		msg = "${evt.displayName} is turned Off"
@@ -1232,8 +1236,23 @@ def addTRV(){
 
 def refreshDevices() {
 	log.info("Refreshing all devices...")
-	getChildDevices().each { device ->
-		device.refresh()
+    def NeedsRefreshTime = new Date()
+    NeedsRefreshTime = NeedsRefreshTime.time - 300000
+    def ChildrenDevices = getChildDevices()
+    ChildrenDevices.each { device ->
+		def LastActiveTime = device.lastActivity
+        if (LastActiveTime == null){
+        	log.debug "${device.label} has no activity so refreshing. Last activity ${LastActiveTime}"
+            device.refresh()
+        } else {
+            LastActiveTime = LastActiveTime.time
+            if (LastActiveTime < NeedsRefreshTime){
+                log.debug "${device.label} needs refreshing. Last activity ${LastActiveTime}"
+                device.refresh()
+            } else {
+                log.debug "${device.label} doesn't need refreshing. Last activity ${LastActiveTime}"
+            }
+		}
 	}
 }
 
@@ -1262,7 +1281,7 @@ def getDeviceStatus(id) {
 	} else {
 		log.error("Non-200 from product list call. ${resp.status} ${resp.data}")
 	}
-    log.debug "Product call returned: $retVal"
+    //log.debug "Product call returned: $retVal"
 	return retVal
 }
 
@@ -1270,12 +1289,12 @@ def getDeviceTRVStatus(id) {
 	def DeviceTRVStatus = []
     def retVal = []
     def TimeNow = now()
-    def CacheExpire = state.LastTRVCheck + 120000
+    def CacheExpire = state.LastTRVCheck + 180000
     
-    log.debug "Last check: ${state.LastTRVCheck}, cache expires: ${CacheExpire}"
+    //log.debug "Last check: ${state.LastTRVCheck}, cache expires: ${CacheExpire}"
     
     if (CacheExpire < TimeNow || null == state.DeviceTRVStatusCache){
-    	log.debug "getting new data"
+    	//log.debug "getting new data"
 		def resp = apiGET("/products")
         if (resp.status == 200) {
             DeviceTRVStatus = resp.data
@@ -1286,7 +1305,7 @@ def getDeviceTRVStatus(id) {
 			log.error("Non-200 from product list call. ${resp.status} ${resp.data}")
 		}
     } else {
-    	log.debug "using cached data"
+    	//log.debug "using cached data"
     	DeviceTRVStatus = state.DeviceTRVStatusCache
     }
 
@@ -1296,7 +1315,7 @@ def getDeviceTRVStatus(id) {
         }
     }
 
-	log.debug "TRV Product call returned: ${retVal}"
+	//log.debug "TRV Product call returned: ${retVal}"
 	return retVal
 }
 
@@ -1309,7 +1328,7 @@ def getDeviceInfo(id) {
 	} else {
 		log.error("Non-200 from device info call. ${resp.status} ${resp.data}")
 	}
-	log.debug "Device call returned: $retVal"
+	//log.debug "Device call returned: $retVal"
     return retVal
 }
 
@@ -1319,7 +1338,7 @@ def getDeviceID(ProductID) {
 	if (resp.status == 200) {
 		resp.data.eachWithIndex { currentDevice, i ->
 			if(currentDevice.state.control == ProductID) {
-				log.debug "Device ID identified as: ${resp.data[i].id}"
+				//log.debug "Device ID identified as: ${resp.data[i].id}"
                 retVal = resp.data[i].id
             }
         }
@@ -1327,7 +1346,7 @@ def getDeviceID(ProductID) {
 	} else {
 		log.error("Non-200 from device info call. ${resp.status} ${resp.data}")
 	}
-	log.debug "Device call returned: $retVal"
+	//log.debug "Device call returned: $retVal"
     return retVal
 }
 
