@@ -1289,7 +1289,11 @@ def getDeviceTRVStatus(id) {
 	def DeviceTRVStatus = []
     def retVal = []
     def TimeNow = now()
-    def CacheExpire = state.LastTRVCheck + 180000
+    def CacheExpire
+
+	if (null != state.LastTRVCheck){
+		CacheExpire = state.LastTRVCheck + 180000	
+	}
     
     //log.debug "Last check: ${state.LastTRVCheck}, cache expires: ${CacheExpire}"
     
