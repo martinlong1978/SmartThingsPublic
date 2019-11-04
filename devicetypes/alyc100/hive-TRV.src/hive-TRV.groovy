@@ -582,6 +582,6 @@ def poll() {
 
 def refresh() {
 	log.debug "Executing 'refresh'"
-    unshedule('poll')
+    unschedule('poll')
 	runEvery5Minutes('poll')
 }
